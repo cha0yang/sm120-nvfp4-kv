@@ -1,0 +1,12 @@
+# 本补丁的基线 (由 patch.sh 校验)
+vllm_expected=0.29.0
+flashinfer_min=0.6.15
+torch_major=2.13
+
+target1=vllm/v1/attention/backends/flashinfer.py
+sha256_1_orig=95f9e66762860f94a428c0f7f9ff6564f375ed95c46fc8b9019b3d91c99a57b0
+sha256_1_patched=8a65f51eb6b6b35d1032f78e28bd215aa79033b8493eec5cfb2960513fb7af68
+
+target2=vllm/utils/flashinfer.py
+sha256_2_orig=4d9352c82f189e56109b7112a742b6610a15e0d96fab561f4f1336f7b9ea4507
+sha256_2_patched=87aeeeac0924a908f5b4931551079958fd4d9b34cb9bdb1d2bde7d053df0ff26

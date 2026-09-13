@@ -1,0 +1,290 @@
+--- a/vllm/v1/attention/backends/flashinfer.py
++++ b/vllm/v1/attention/backends/flashinfer.py
+@@ -390,6 +390,7 @@
+         return out
+ 
+ 
++
+ class FlashInferBackend(AttentionBackend):
+     @classmethod
+     def customize_spec(cls, spec: "AttentionSpec") -> "AttentionSpec":
+@@ -490,6 +491,10 @@
+     @classmethod
+     def supports_kv_cache_dtype(cls, kv_cache_dtype: CacheDType | None) -> bool:
+         if kv_cache_dtype is not None and kv_cache_dtype.startswith("nvfp4"):
++            if current_platform.is_device_capability_family(120):
++                # SM120: XQA decode (native nvfp4-KV) + fa2 prefill.
++                # [SM120-NVFP4-KV PATCH]
++                return supports_trtllm_attention(is_prefill=False)
+             return (
+                 current_platform.is_device_capability_family(100)
+                 and supports_trtllm_attention(is_prefill=True)
+@@ -763,8 +768,12 @@
+             # Cannot use self.kv_cache_spec.dtype here because kv_cache_spec
+             # storage dtype may not be the same as the op dtype (uint8 vs fp8_e4m3)
+             self.is_kvcache_nvfp4 = self.cache_dtype.startswith("nvfp4")
++            self.nvfp4_sm120 = (
++                self.is_kvcache_nvfp4
++                and current_platform.is_device_capability_family(120)
++            )
+             if self.is_kvcache_nvfp4:
+-                if (
++                if not self.nvfp4_sm120 and (
+                     force_use_trtllm_attention() is False
+                     or not supports_trtllm_attention(is_prefill=True)
+                     or not supports_trtllm_attention(is_prefill=False)
+@@ -784,9 +793,15 @@
+         else:
+             self.cache_dtype = "auto"
+             self.is_kvcache_nvfp4 = False
++            self.nvfp4_sm120 = False
+             assert self.kv_cache_spec.dtype == self.model_config.dtype
+             self.kv_cache_dtype = self.kv_cache_spec.dtype
+ 
++        # [SM120-NVFP4-KV PATCH] flashinfer 需要真实 torch dtype 而非字符串 "nvfp4"
++        self.kv_data_type_fi = (
++            torch.uint8 if self.is_kvcache_nvfp4 else self.kv_cache_dtype
++        )
++
+         # Compute per-phase Q dtype.  On SM90 (XQA decode), the prefill and
+         # decode phases require different Q dtypes when the KV cache is FP8
+         # (FP8-Q for the FI native prefill, BF16/FP16-Q for XQA decode),
+@@ -966,6 +981,10 @@
+                 return FlashInferBackend.get_dtype_for_flashinfer(cache_dtype)
+             return self.model_config.dtype
+         if cache_dtype.startswith("nvfp4"):
++            if current_platform.is_device_capability_family(120):
++                # SM120: fa2 prefill cannot take FP8-Q and XQA decode requires
++                # out dtype == q dtype, so Q/O stay model dtype. [SM120-NVFP4-KV PATCH]
++                return self.model_config.dtype
+             return FlashInferBackend.get_dtype_for_flashinfer("fp8_e4m3")
+         return self.kv_cache_spec.dtype
+ 
+@@ -1128,7 +1147,7 @@
+                             get_flashinfer_layout_string(self.kv_cache_layout),
+                             backend="auto",
+                             q_data_type=self.q_data_type_prefill,
+-                            kv_data_type=self.kv_cache_dtype,
++                            kv_data_type=self.kv_data_type_fi,
+                             head_dim_qk=self.head_dim,
+                             head_dim_vo=self.head_dim,
+                             window_left=self.window_left,
+@@ -1159,15 +1178,23 @@
+                         get_flashinfer_layout_string(self.kv_cache_layout),
+                         backend="auto",
+                         q_data_type=self.q_data_type_prefill,
+-                        kv_data_type=self.kv_cache_dtype,
++                        kv_data_type=self.kv_data_type_fi,
+                         head_dim_qk=self.head_dim,
+                         head_dim_vo=self.head_dim,
+                         window_left=self.window_left,
+                     )
+                 else:
+                     # NVFP4 KV cache requires the trtllm-gen backend inside
+-                    # the wrapper; fa2/fa3 do not support nvfp4.
+-                    backend = "trtllm-gen" if self.is_kvcache_nvfp4 else "auto"
++                    # the wrapper; fa2/fa3 do not support nvfp4 (SM120 has no
++                    # trtllm-gen FMHA -> fa2). [SM120-NVFP4-KV PATCH]
++                    if self.is_kvcache_nvfp4:
++                        backend = (
++                            "fa2"
++                            if current_platform.is_device_capability_family(120)
++                            else "trtllm-gen"
++                        )
++                    else:
++                        backend = "auto"
+                     self._prefill_wrapper = BatchPrefillWithPagedKVCacheWrapper(
+                         self._get_workspace_buffer(),
+                         get_flashinfer_layout_string(self.kv_cache_layout),
+@@ -1192,8 +1219,11 @@
+                 paged_kv_indices = None
+                 paged_kv_last_page_len = None
+             # NVFP4 KV cache requires the trtllm-gen backend inside
+-            # the wrapper; fa2/fa3 do not support nvfp4.
+-            backend = "trtllm-gen" if self.is_kvcache_nvfp4 else "auto"
++            # the wrapper; on SM120 auto selects xqa. [SM120-NVFP4-KV PATCH]
++            if self.is_kvcache_nvfp4 and current_platform.is_device_capability_family(120):
++                backend = "auto"
++            else:
++                backend = "trtllm-gen" if self.is_kvcache_nvfp4 else "auto"
+             decode_wrapper = BatchDecodeWithPagedKVCacheWrapper(
+                 self._get_workspace_buffer(),
+                 get_flashinfer_layout_string(self.kv_cache_layout),
+@@ -1508,7 +1538,7 @@
+                 window_left=self.window_left,
+                 logits_soft_cap=self.logits_soft_cap,
+                 q_data_type=self.q_data_type_prefill,
+-                kv_data_type=self.kv_cache_dtype,
++                kv_data_type=self.kv_data_type_fi,
+             )
+             return attn_metadata
+ 
+@@ -1598,8 +1628,10 @@
+                     # use FP8 o_data_type so the wrapper matches the
+                     # FP8 output buffer allocated in forward().
+                     o_dtype = (
+-                        FP8_DTYPE if self.is_kvcache_nvfp4 else self.model_config.dtype
+-                    )
++                        FP8_DTYPE
++                        if self.is_kvcache_nvfp4 and not self.nvfp4_sm120
++                        else self.model_config.dtype
++                    )  # [SM120-NVFP4-KV PATCH]
+                     prefill_wrapper.plan(
+                         qo_indptr=qo_indptr_prefill_cpu,
+                         paged_kv_indptr=paged_kv_indptr_prefill_cpu,
+@@ -1614,7 +1646,7 @@
+                         window_left=self.window_left,
+                         logits_soft_cap=self.logits_soft_cap,
+                         q_data_type=self.q_data_type_prefill,
+-                        kv_data_type=self.kv_cache_dtype,
++                        kv_data_type=self.kv_data_type_fi,
+                         o_data_type=o_dtype,
+                         fixed_split_size=self.prefill_fixed_split_size,
+                         disable_split_kv=self.disable_split_kv,
+@@ -1693,8 +1725,10 @@
+                 # use FP8 o_data_type so the wrapper matches the
+                 # FP8 output buffer allocated in forward().
+                 o_dtype = (
+-                    FP8_DTYPE if self.is_kvcache_nvfp4 else self.model_config.dtype
+-                )
++                    FP8_DTYPE
++                    if self.is_kvcache_nvfp4 and not self.nvfp4_sm120
++                    else self.model_config.dtype
++                )  # [SM120-NVFP4-KV PATCH]
+                 fast_plan_decode(
+                     decode_wrapper,
+                     indptr_cpu=self.paged_kv_indptr.cpu[: num_input_tokens + 1],
+@@ -1712,7 +1746,7 @@
+                     window_left=self.window_left,
+                     logits_soft_cap=self.logits_soft_cap,
+                     q_data_type=self.q_data_type_decode,
+-                    kv_data_type=self.kv_cache_dtype,
++                    kv_data_type=self.kv_data_type_fi,
+                     o_data_type=o_dtype,
+                     fixed_split_size=self.decode_fixed_split_size,
+                     disable_split_kv=self.disable_split_kv,
+@@ -1764,6 +1798,14 @@
+         self.cache_dtype = kv_cache_dtype
+         self.is_kvcache_nvfp4 = kv_cache_dtype.startswith("nvfp4")
+         self.kv_cache_dtype = "nvfp4" if self.is_kvcache_nvfp4 else kv_cache_dtype
++        # [SM120-NVFP4-KV PATCH]
++        self.nvfp4_sm120 = (
++            self.is_kvcache_nvfp4
++            and current_platform.is_device_capability_family(120)
++        )
++        self.kv_data_type_fi = (
++            torch.uint8 if self.is_kvcache_nvfp4 else kv_cache_dtype
++        )
+         self.fp4_data_dim = head_size // 2 if self.is_kvcache_nvfp4 else 0
+         self.logits_soft_cap = logits_soft_cap
+         self.kv_sharing_target_layer_name = kv_sharing_target_layer_name
+@@ -2057,6 +2099,7 @@
+             k_data, k_sf = nvfp4_split_data_scale(kv_cache_tuple[0])
+             v_data, v_sf = nvfp4_split_data_scale(kv_cache_tuple[1])
+             nvfp4_kv_data = (k_data, v_data)
++            # [SM120-NVFP4-KV PATCH] raw (swizzled, as stored by the kernel)
+             nvfp4_kv_block_scales = (k_sf, v_sf)
+         else:
+             kv_cache_tuple = kv_cache_permute.split(hs, dim=-1)
+@@ -2067,7 +2110,7 @@
+         )
+         if decode_with_dedicated_xqa:
+             assert not use_dcp
+-            assert not self.is_kvcache_nvfp4
++            # [SM120-NVFP4-KV PATCH] nvfp4 supported here via dedicated XQA (upstream #53543)
+             assert self.o_sf_scale is None
+             assert output.dtype != FP4_DTYPE
+ 
+@@ -2134,8 +2177,10 @@
+                     # Use a pre-allocated FP8 buffer and dequantize
+                     # afterwards.
+                     needs_fp8_out_prefill = (
+-                        self.is_kvcache_nvfp4 and output.dtype != FP8_DTYPE
+-                    )
++                        self.is_kvcache_nvfp4
++                        and not self.nvfp4_sm120
++                        and output.dtype != FP8_DTYPE
++                    )  # [SM120-NVFP4-KV PATCH]
+                     if needs_fp8_out_prefill:
+                         out_prefill = self._nvfp4_fp8_out[:num_prefill_tokens]
+                     else:
+@@ -2201,7 +2246,11 @@
+ 
+                 # NVFP4 trtllm kernel only supports FP8 output.
+                 # Use a pre-allocated FP8 buffer and dequantize afterwards.
+-                needs_fp8_out = self.is_kvcache_nvfp4 and output.dtype != FP8_DTYPE
++                needs_fp8_out = (
++                    self.is_kvcache_nvfp4
++                    and not self.nvfp4_sm120
++                    and output.dtype != FP8_DTYPE
++                )  # [SM120-NVFP4-KV PATCH]
+                 if needs_fp8_out:
+                     out = self._nvfp4_fp8_out[:num_prefill_tokens]
+ 
+@@ -2300,11 +2349,17 @@
+                     kv_cache_for_fi = nvfp4_kv_data
+                 else:
+                     kv_cache_for_fi = kv_cache_tuple
+-                kv_cache_sf = nvfp4_kv_block_scales if self.is_kvcache_nvfp4 else None
++                kv_cache_sf = (
++                    nvfp4_kv_block_scales if self.is_kvcache_nvfp4 else None
++                )  # [SM120-NVFP4-KV PATCH] decode uses linear scales
+ 
+                 # NVFP4 kernel only supports FP8 output.
+                 # Use a pre-allocated FP8 buffer and dequantize afterwards.
+-                needs_fp8_out = self.is_kvcache_nvfp4 and output.dtype != FP8_DTYPE
++                needs_fp8_out = (
++                    self.is_kvcache_nvfp4
++                    and not self.nvfp4_sm120
++                    and output.dtype != FP8_DTYPE
++                )  # [SM120-NVFP4-KV PATCH]
+                 if needs_fp8_out:
+                     out_decode = self._nvfp4_fp8_out[:num_decode_tokens]
+                 else:
+@@ -2400,9 +2455,13 @@
+                     )
+                     q_len_per_req: int | None = attn_metadata.decode.q_len_per_req
+ 
++                    # [SM120-NVFP4-KV PATCH] dedicated XQA path also serves
++                    # nvfp4 KV (upstream #53543): pass data + block scales.
+                     flashinfer_xqa_batch_decode_with_kv_cache(
+                         query=decode_query,
+-                        kv_cache=kv_cache_tuple,
++                        kv_cache=(
++                            nvfp4_kv_data if self.is_kvcache_nvfp4 else kv_cache_tuple
++                        ),
+                         workspace_buffer=workspace_buffer,
+                         block_tables=block_tables_decode,
+                         seq_lens=seq_lens_decode,
+@@ -2415,6 +2474,9 @@
+                         kv_layout=get_flashinfer_layout_string(self.kv_cache_layout),
+                         q_len_per_req=q_len_per_req,
+                         mask=attn_metadata.decode.mask,
++                        kv_cache_sf=(
++                            nvfp4_kv_block_scales if self.is_kvcache_nvfp4 else None
++                        ),
+                         q_cu_seq_lens=attn_metadata.decode.q_cu_seq_lens,
+                     )
+                     return output_padded
+@@ -2433,7 +2495,11 @@
+ 
+                 # NVFP4 trtllm kernel only supports FP8 output.
+                 # Use a pre-allocated FP8 buffer and dequantize afterwards.
+-                needs_fp8_out = self.is_kvcache_nvfp4 and output.dtype != FP8_DTYPE
++                needs_fp8_out = (
++                    self.is_kvcache_nvfp4
++                    and not self.nvfp4_sm120
++                    and output.dtype != FP8_DTYPE
++                )  # [SM120-NVFP4-KV PATCH]
+                 if needs_fp8_out:
+                     out = self._nvfp4_fp8_out[:num_decode_tokens]
+ 
+@@ -2498,7 +2564,7 @@
+                     cum_seq_lens_q=q_cu_seq_lens,
+                     kv_cache_sf=(
+                         nvfp4_kv_block_scales if self.is_kvcache_nvfp4 else None
+-                    ),
++                    ),  # [SM120-NVFP4-KV PATCH] decode uses linear scales
+                     lse=lse,
+                     return_lse=self.need_to_return_lse_for_decode,
+                 )

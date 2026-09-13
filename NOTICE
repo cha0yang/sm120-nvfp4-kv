@@ -1,0 +1,18 @@
+第三方代码说明 (Third-party notices)
+=====================================
+
+1. patches/01-attention-flashinfer.patch
+   patches/02-utils-flashinfer.patch
+   内容为 vLLM 项目文件 vllm/v1/attention/backends/flashinfer.py 与
+   vllm/utils/flashinfer.py 的补丁 diff，仅用于一键打补丁/还原。
+   vLLM 采用 Apache-2.0 许可: https://github.com/vllm-project/vllm (LICENSE)
+   本仓库对这些文件不做额外授权，其版权归 vLLM 项目及其贡献者所有。
+
+2. 补丁思路来源
+   - vLLM issue #49011 (SM120 NVFP4 KV cache)
+   - PR #49818 (dispatch gates), #50085 (V-scale 写), #53543 (masked NVFP4 XQA)
+   - hikarioyama/vllm-nvfp4-kv-sm120 (FA2 nvfp4-KV patch 的思路)
+   本仓库的实现与上述来源独立编写，但受益于其结论（尤其 HND 布局的必要性）。
+
+3. 完整致谢
+   本项目参考/引用的项目、仓库、issue/PR 作者与模型提供方, 详见 README.md §4 致谢与溯源

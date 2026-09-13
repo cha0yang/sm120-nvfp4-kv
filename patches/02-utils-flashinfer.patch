@@ -1,0 +1,30 @@
+--- a/vllm/utils/flashinfer.py
++++ b/vllm/utils/flashinfer.py
+@@ -475,16 +475,23 @@
+     if envs.VLLM_BATCH_INVARIANT:
+         return False
+ 
+-    # Requires NVIDIA artifactory to be accessible to download cubins
+-    if not has_nvidia_artifactory():
+-        return False
+-
+     # SM90 and SM12x have XQA decode only.
+     if current_platform.is_device_capability(
+         90
+     ) or current_platform.is_device_capability_family(120):
++        # [SM120-NVFP4-KV PATCH] XQA decode kernels do not need trtllm-gen
++        # FHMA cubins from the artifactory; they come from the flashinfer
++        # wheel / local JIT cache. Skipping the network probe here makes
++        # startup immune to a transiently unreachable artifactory
++        # (observed: "Failed to connect to NVIDIA artifactory: Read timed out"
++        #  -> supports_trtllm_attention()==False -> no valid attention backend
++        #  for kv_cache_dtype=nvfp4).
+         return not is_prefill
+ 
++    # Requires NVIDIA artifactory to be accessible to download cubins
++    if not has_nvidia_artifactory():
++        return False
++
+     # SM100/SM103 has both prefill and decode TRTLLM kernels.
+     return current_platform.is_device_capability_family(100)
+ 
