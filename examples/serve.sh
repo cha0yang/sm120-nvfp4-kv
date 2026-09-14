@@ -52,4 +52,5 @@ vllm serve nvidia/Qwen3.8-27B-NVFP4 \
   --cudagraph-capture-sizes 3 \
   --speculative-config '{"method":"mtp","num_speculative_tokens":2}' \
   --trust-remote-code \
+  --enable-prompt-tokens-details \
   "$@"

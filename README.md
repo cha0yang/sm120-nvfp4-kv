@@ -77,10 +77,11 @@ uv pip install vllm==0.29.0 --torch-backend auto
 
 | Context length | prefill speed | prefill time | decode speed |
 |---|---|---|---|
-| 15k | 4,094 tok/s | 3.7s | 76.0 tok/s |
-| 32k | 3,154 tok/s | 9.7s | 72.4 tok/s |
-| 60k | 2,610 tok/s | 23.0s | 83.9 tok/s |
-| **121k** | **1,684 tok/s** | **71.97s** | **70.5 tok/s** |
+| 8k | 4,102 tok/s | 2.0s | 72.3 tok/s |
+| 16k | 3,619 tok/s | 4.5s | 69.9 tok/s |
+| 32k | 3,106 tok/s | 10.4s | 69.4 tok/s |
+| 64k | 2,375 tok/s | 27.1s | 67.6 tok/s |
+| **128k** | **1,617 tok/s** | **79.6s** | **62.4 tok/s** |
 
 ## 4. Other
 
