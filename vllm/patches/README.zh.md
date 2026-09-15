@@ -17,6 +17,8 @@
 
 ## 用法
 
+在本目录（`vllm/patches/`）下运行：
+
 ```bash
 ./patch.sh            # 自动校验 vllm 版本 + flashinfer 版本 + 文件哈希 → 打补丁
 ./patch.sh --check    # 只检查，不改动

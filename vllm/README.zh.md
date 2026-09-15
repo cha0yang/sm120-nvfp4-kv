@@ -1,6 +1,11 @@
-# 示例部署：2× RTX 5060 Ti + Qwen3.8-27B-NVFP4
+# vLLM：SM120 上的 NVFP4 KV Cache
 
-[English](README.md)
+示例部署：2× RTX 5060 Ti + Qwen3.8-27B-NVFP4
+
+[English](README.md) · [← 项目总入口](../README.zh.md)
+
+> 共用环境要求与 vLLM/SGLang 对比见 [顶层 README](../README.zh.md)。
+> 本文件只讲 vLLM。补丁原理见 [`patches/README.zh.md`](patches/README.zh.md)。
 
 ## 环境
 
@@ -21,7 +26,7 @@
 
 ```bash
 # 0) 指定虚拟环境路径
-export VENV=~/vllm
+export VENV=~/vllm13
 
 # 1) 建 venv
 python3 -m venv "$VENV" && source "$VENV/bin/activate"
@@ -29,10 +34,10 @@ pip install uv
 uv pip install vllm==0.29.0 --torch-backend auto
 
 # 2) 环境自检 + 修复（CUDA 软链、nvcc-wrapper）
-../bootstrap.sh
+./bootstrap.sh
 
 # 3) 打 NVFP4-KV 补丁（自动校验版本 + 哈希）
-../patches/patch.sh
+./patches/patch.sh
 
 # 4) 起服务（首次启动需 JIT 编译，约 10–20 分钟）
 ./run.sh
@@ -44,7 +49,7 @@ uv pip install vllm==0.29.0 --torch-backend auto
 |---|---|---|
 | `--tensor-parallel-size` | 2 | 双卡 |
 | `--kv-cache-dtype` | nvfp4 | 我们的目的 |
-| `--max-model-len` | 200000 | KV 池 214,457 tokens（1.07× 并发） |
+| `--max-model-len` | 不传 | 留空则取模型自身上限（262,144）。KV 池 292,103 tokens（1.11× 并发，实测） |
 | `--max-num-seqs` | 1 | 单并发 |
 | `--gpu-memory-utilization` | 0.97 | 显示走核显，显存全给 |
 | `--performance-mode` | interactivity | 单用户低延迟 |

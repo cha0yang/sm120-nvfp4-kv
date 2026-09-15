@@ -1,0 +1,31 @@
+diff --git a/sglang/srt/speculative/draft_utils.py b/sglang/srt/speculative/draft_utils.py
+index 13de33a..d7362f7 100644
+--- a/sglang/srt/speculative/draft_utils.py
++++ b/sglang/srt/speculative/draft_utils.py
+@@ -131,11 +131,21 @@ class DraftBackendFactory:
+             "fa4": self._create_fa4_prefill_backend,
+             "dsv4": self._create_dsv4_prefill_backend,
+         }
+-        backend_name = (
+-            "decode_attention_backend"
+-            if get_spec().speculative_attention_mode == "decode"
+-            else "prefill_attention_backend"
+-        )
++        # Draft-extend is a prefill-shaped pass (EXTEND mode, writes draft KV),
++        # so it must run on a backend that can actually prefill. When the user
++        # split the backends (e.g. NVFP4 KV: prefill=flashinfer,
++        # decode=trtllm_mha), speculative_attention_mode="decode" would route
++        # draft-extend to the decode backend, which has no prefill kernel for
++        # that KV dtype and fails at construction/warmup. Only follow the mode
++        # when both phases share one backend.
++        prefill_backend_name, decode_backend_name = attention_backends()
++        if (
++            get_spec().speculative_attention_mode == "decode"
++            and prefill_backend_name == decode_backend_name
++        ):
++            backend_name = "decode_attention_backend"
++        else:
++            backend_name = "prefill_attention_backend"
+         backend = self._create_backend(
+             backend_name,
+             backend_map,

@@ -1,0 +1,15 @@
+# VERSIONS.txt — 补丁基线 (被 patch.sh source)
+# 行号/上下文锁定, 版本不符时 patch.sh 会拒绝执行
+
+sglang_expected=0.5.19
+flashinfer_min=0.6.15
+torch_major=2.13
+
+# 目标文件 (相对 site-packages) 与 sha256 基线
+target1=sglang/srt/layers/attention/trtllm_mha_backend.py
+sha256_1_orig=4ab4020e9b6dc22c018ad17a585f7c766cbbe955ffd84efdbb756effd0d33e4f
+sha256_1_patched=1348dd44549564c2c49284ffab8b075a2c8796a6752d63468c96eaac94a25544
+
+target2=sglang/srt/speculative/draft_utils.py
+sha256_2_orig=1702d290849ad4dfd7643bdf73e6d4a8a104e1e80a8c2a20f9424707eab82a78
+sha256_2_patched=6c0148955889a373946386e7c0b9f8816d88d768729094620ff213587c9b4e6d

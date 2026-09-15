@@ -3,7 +3,7 @@
 set -uo pipefail
 cd "$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 
-PORT="${PORT:-8000}"
+PORT="${PORT:-8000}"   # 与 serve.sh 的 --port 保持一致
 
 # 已在运行则退出
 if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
@@ -11,7 +11,7 @@ if curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
   exit 1
 fi
 
-LOG=/tmp/serve.log
+LOG="${LOG:-/tmp/serve.log}"
 : > "$LOG"
 setsid ./serve.sh >"$LOG" 2>&1 < /dev/null &
 PID=$!

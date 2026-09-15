@@ -18,6 +18,8 @@ upstream PRs #49818 / #50085 remain unmerged.
 
 ## Usage
 
+Run from this directory (`vllm/patches/`):
+
 ```bash
 ./patch.sh            # verify vLLM version + FlashInfer version + file hashes, then patch
 ./patch.sh --check    # check only, change nothing
@@ -25,7 +27,8 @@ upstream PRs #49818 / #50085 remain unmerged.
 ./patch.sh --force    # apply even if version/hashes mismatch (not recommended)
 ```
 
-`VENV` must point at the vLLM virtualenv; the script exits with an error if it is unset.
+`VENV` must point at the vLLM virtualenv; the script exits with an error if it is unset
+(it never guesses, so a wrong environment cannot be patched by accident).
 
 What gets verified:
 - vLLM version == `vllm_expected` in `VERSIONS.txt` (currently 0.29.0)

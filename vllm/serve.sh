@@ -12,13 +12,15 @@ export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"
 # 运行环境 (venv 根目录) — 必须显式指定, 不设默认值
 if [[ -z "${VENV:-}" ]]; then
   echo "!! 未设置 VENV。请指向 vLLM 虚拟环境, 例如:" >&2
-  echo "     VENV=~/vllm ./serve.sh" >&2
+  echo "     VENV=~/vllm13 ./serve.sh" >&2
   exit 1
 fi
 VENV="$(readlink -f "$VENV")"
-[[ -x "$VENV/bin/python3" ]] || { echo "!! 找不到 $VENV/bin/python3" >&2; exit 1; }
+# venv 里 python / python3 只保证存在其一, 两个都试
+PY="$VENV/bin/python"; [[ -x "$PY" ]] || PY="$VENV/bin/python3"
+[[ -x "$PY" ]] || { echo "!! 找不到 $VENV/bin/python{,3}" >&2; exit 1; }
 # site-packages 动态取, 不写死 python 版本
-SITE="$("$VENV/bin/python3" -c 'import site; print(site.getsitepackages()[0])')"
+SITE="$("$PY" -c 'import site; print(site.getsitepackages()[0])')"
 # 找到 nvcc, 避免 deep_gemm 等模块找不到 CUDA 报 warning
 export CUDA_HOME="${CUDA_HOME:-$SITE/nvidia/cu13}"
 # nvcc 必须在 PATH 里, 否则 vllm 的 has_flashinfer() 返回 False, XQA decode 会炸
@@ -36,7 +38,7 @@ export VLLM_KV_CACHE_LAYOUT=HND
 # 激活 venv (需要 bash 可用 source)
 source "$VENV/bin/activate"
 
-vllm serve nvidia/Qwen3.8-27B-NVFP4 \
+vllm serve QUASAR-QAT/Qwen3.8-27B-QUASAR-NVFP4 \
   --tensor-parallel-size 2 \
   --disable-custom-all-reduce \
   --override-generation-config '{"temperature": 0.6, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5}' \
@@ -46,7 +48,6 @@ vllm serve nvidia/Qwen3.8-27B-NVFP4 \
   --enable-auto-tool-choice \
   --kv-cache-dtype nvfp4 \
   --gpu-memory-utilization 0.97 \
-  --max-model-len 200000 \
   --max-num-seqs 1 \
   --performance-mode interactivity \
   --cudagraph-capture-sizes 3 \

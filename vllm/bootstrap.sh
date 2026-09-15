@@ -10,16 +10,17 @@ D="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 # VENV 必须由用户指定, 不设默认值, 避免改错环境
 if [[ -z "${VENV:-}" ]]; then
   echo "!! 未设置 VENV。请指向 vLLM 虚拟环境, 例如:" >&2
-  echo "     VENV=~/vllm $0" >&2
+  echo "     VENV=~/vllm13 $0" >&2
   exit 1
 fi
 VENV="$(readlink -f "$VENV")"
-if [[ ! -x "$VENV/bin/python3" ]]; then
-  echo "!! 找不到 python3: $VENV/bin/python3" >&2
+# venv 里 python / python3 只保证存在其一, 两个都试
+PY="$VENV/bin/python"; [[ -x "$PY" ]] || PY="$VENV/bin/python3"
+if [[ ! -x "$PY" ]]; then
+  echo "!! 找不到 $VENV/bin/python{,3}" >&2
   echo "   请确认 VENV 指向一个已安装 vllm 的虚拟环境" >&2
   exit 1
 fi
-PY="$VENV/bin/python3"
 # site-packages 动态取, 不写死 python 版本
 SITE="$("$PY" -c 'import site; print(site.getsitepackages()[0])')"
 CU13="$SITE/nvidia/cu13"
@@ -99,9 +100,9 @@ fi
 
 echo "── 6. 关键环境变量 (必须在 serve.sh 里) ──"
 SERVE=""
-for cand in "$D/serve.sh" "$D/examples/serve.sh"; do [[ -f "$cand" ]] && { SERVE="$cand"; break; }; done
-if [[ -z "$SERVE" ]]; then
-  bad "找不到 serve.sh (请参照 examples/serve.sh 自建)"
+SERVE="$D/serve.sh"
+if [[ ! -f "$SERVE" ]]; then
+  bad "找不到 $SERVE"
 else
   for kv in "CUDA_HOME" "PATH.*bin" "FLASHINFER_NVCC" "VLLM_KV_CACHE_LAYOUT=HND"; do
     grep -qE "export .*$kv" "$SERVE" && ok "$(basename "$(dirname "$SERVE")")/serve.sh: $kv" || bad "serve.sh 缺: $kv"

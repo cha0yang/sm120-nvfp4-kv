@@ -1,18 +1,59 @@
 第三方代码说明 (Third-party notices)
 =====================================
 
-1. patches/01-attention-flashinfer.patch
-   patches/02-utils-flashinfer.patch
-   内容为 vLLM 项目文件 vllm/v1/attention/backends/flashinfer.py 与
-   vllm/utils/flashinfer.py 的补丁 diff，仅用于一键打补丁/还原。
-   vLLM 采用 Apache-2.0 许可: https://github.com/vllm-project/vllm (LICENSE)
-   本仓库对这些文件不做额外授权，其版权归 vLLM 项目及其贡献者所有。
+本仓库提供 **两种引擎** 在 SM120 上启用 NVFP4 KV cache 的方案:
+  A. vLLM   — 顶层 patches/ + bootstrap.sh + vllm/
+  B. SGLang — sglang/
 
-2. 补丁思路来源
-   - vLLM issue #49011 (SM120 NVFP4 KV cache)
-   - PR #49818 (dispatch gates), #50085 (V-scale 写), #53543 (masked NVFP4 XQA)
-   - hikarioyama/vllm-nvfp4-kv-sm120 (FA2 nvfp4-KV patch 的思路)
-   本仓库的实现与上述来源独立编写，但受益于其结论（尤其 HND 布局的必要性）。
+两者共用顶层 README / TROUBLESHOOTING / LICENSE, 但补丁、脚本、环境各自独立。
 
-3. 完整致谢
-   本项目参考/引用的项目、仓库、issue/PR 作者与模型提供方, 详见 README.md §4 致谢与溯源
+────────────────────────────────────────────────────────────
+1. vLLM 侧补丁
+────────────────────────────────────────────────────────────
+patches/01-attention-flashinfer.patch
+patches/02-utils-flashinfer.patch
+  内容为 vLLM 项目文件 vllm/v1/attention/backends/flashinfer.py 与
+  vllm/utils/flashinfer.py 的补丁 diff，仅用于一键打补丁/还原。
+  vLLM 采用 Apache-2.0 许可: https://github.com/vllm-project/vllm (LICENSE)
+  本仓库对这些文件不做额外授权，其版权归 vLLM 项目及其贡献者所有。
+
+思路来源:
+  - vLLM issue #49011 (SM120 NVFP4 KV cache)
+  - PR #49818 (dispatch gates), #50085 (V-scale 写), #53543 (masked NVFP4 XQA)
+  - hikarioyama/vllm-nvfp4-kv-sm120 (FA2 nvfp4-KV patch 的思路)
+  本仓库的实现与上述来源独立编写，但受益于其结论（尤其 HND 布局的必要性）。
+
+────────────────────────────────────────────────────────────
+2. SGLang 侧补丁
+────────────────────────────────────────────────────────────
+sglang/patches/01-attention-trtllm-mha.patch
+sglang/patches/02-speculative-draft-utils.patch
+  内容为 SGLang 项目文件
+    python/sglang/srt/layers/attention/trtllm_mha_backend.py
+    python/sglang/srt/speculative/draft_utils.py
+  的补丁 diff，仅用于一键打补丁/还原。
+  SGLang 采用 Apache-2.0 许可: https://github.com/sgl-project/sglang (LICENSE)
+  本仓库对这些文件不做额外授权，其版权归 SGLang 项目及其贡献者所有。
+
+思路来源:
+  - SGLang 自身已有的 NVFP4 KV cache 支持 (prefill=flashinfer dequant
+    workspace / decode=trtllm_mha native FP4) 与 VerifyMask 基础设施
+  - FlashInfer XQA 的 mask 规范 (flashinfer/xqa.py, csrc/xqa/mha.cu)
+  - vLLM PR #53543 (Enable masked NVFP4 XQA on SM120) 证明了同一路径在
+    vLLM 侧需要显式 mask 才能与投机解码共存
+  - vLLM issue #49011 (SM120 NVFP4 KV cache) 是整个方向的起点
+  本项目独立定位与编写，但受益于上述来源的结论。
+
+────────────────────────────────────────────────────────────
+3. 双方共同依赖
+────────────────────────────────────────────────────────────
+flashinfer-ai/flashinfer — XQA decode 内核、NVFP4 scales、draft mask 契约
+  Apache-2.0: https://github.com/flashinfer-ai/flashinfer (LICENSE)
+
+hikarioyama/vllm-nvfp4-kv-sm120 — 同一目标下最彻底（内核级）的路线，作为参照
+
+────────────────────────────────────────────────────────────
+4. 完整致谢
+────────────────────────────────────────────────────────────
+参考/引用的项目、仓库、issue/PR 作者与模型提供方,
+详见 README.md §致谢与溯源。

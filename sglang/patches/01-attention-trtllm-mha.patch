@@ -1,0 +1,178 @@
+diff --git a/sglang/srt/layers/attention/trtllm_mha_backend.py b/sglang/srt/layers/attention/trtllm_mha_backend.py
+index 4582738..7d3ced1 100644
+--- a/sglang/srt/layers/attention/trtllm_mha_backend.py
++++ b/sglang/srt/layers/attention/trtllm_mha_backend.py
+@@ -512,6 +512,11 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+                 self._alloc_swa_page_table(max_bs, max_num_pages)
+             )
+ 
++            # XQA speculative decoding (q_seq_len > 1) requires a bit-packed
++            # draft-block mask. Chain speculation (topk == 1) is plain causal, so
++            # row r admits draft positions 0..r. Layout per flashinfer xqa:
++            # [bs, q_seq_len, ((q_seq_len + 31) // 32) * 2] uint16, little-endian
++            # bit i of the row = position i visible.
+             self.target_verify_metadata = {
+                 "cache_seqlens": torch.zeros(
+                     max_bs, dtype=torch.int32, device=self.device
+@@ -1150,6 +1155,31 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+         assert self.is_nvfp4_kvcache
+         return self.kv_cache_quant_method.get_bmm_scales(layer.layer_id)
+ 
++    def _spec_verify_mask_row(self) -> torch.Tensor:
++        """Bit-packed causal draft mask for XQA, shape [1, q_seq_len, words].
++
++        Layout per flashinfer xqa: [bs, q_seq_len, ((q_seq_len + 31) // 32) * 2]
++        torch.uint16, little-endian bit i = draft position i is visible. Chain
++        speculation (topk == 1) is plain causal: row r admits positions 0..r.
++        """
++        cached = getattr(self, "_spec_verify_mask_row_cache", None)
++        if cached is not None:
++            return cached
++        spec_q = self.speculative_num_draft_tokens
++        # One uint32 word per 32 draft positions; xqa packs the row as uint16
++        # pairs "aligned with 32 bits", so the tensor exposed to the kernel is
++        # [q_seq_len, divUp(q_seq_len, 32) * 2] uint16 -- that is the same
++        # storage as [q_seq_len, divUp(q_seq_len, 32)] uint32, which is what we
++        # build here (bit i of word w = draft position 32*w + i is visible).
++        words = (spec_q + 31) // 32
++        row = torch.zeros(spec_q, words, dtype=torch.int32, device=self.device)
++        for r in range(spec_q):
++            for bit in range(r + 1):
++                row[r, bit // 32] |= 1 << (bit % 32)
++        cached = row.view(torch.uint16).unsqueeze(0)
++        self._spec_verify_mask_row_cache = cached
++        return cached
++
+     def _run_fixed_q_len_decode(
+         self,
+         query: torch.Tensor,
+@@ -1163,6 +1193,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+         sinks: Optional[torch.Tensor],
+         q_len_per_req: int = 1,
+         kv_cache_sf=None,
++        mask=None,
+     ) -> torch.Tensor:
+         """Run decode, optionally sorting and splitting requests by KV length."""
+ 
+@@ -1184,6 +1215,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+                 skip_softmax_threshold_scale_factor=envs.SGLANG_SKIP_SOFTMAX_DECODE_THRESHOLD_SCALE_FACTOR.get(),
+                 out_dtype=self.q_data_type,
+                 kv_cache_sf=kv_cache_sf,
++                mask=mask,
+                 multi_ctas_kv_counter_buffer=self._multi_ctas_kv_counter_buffer,
+                 **kwargs,
+             )
+@@ -1329,7 +1361,15 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+         save_kv_cache=True,
+         **kwargs,
+     ):
+-        if self.decode_uses_native_fp4:
++        if self.decode_uses_native_fp4 and not (
++            forward_batch.forward_mode.is_target_verify()
++            or forward_batch.forward_mode.is_draft_extend_v2()
++        ):
++            # Native FP4 KV has no prefill kernel in this backend. Spec-decode
++            # target-verify / draft-extend do run here (they use the decode
++            # kernel); those only need the packed FP4 + block scales, handled
++            # below when is_decode_mode is set. Real prefill must use a separate
++            # backend such as flashinfer or triton.
+             raise RuntimeError(
+                 "TRTLLM MHA with native FP4 KV cache supports decode only; "
+                 "use a separate prefill backend such as flashinfer or triton."
+@@ -1391,31 +1431,53 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+         else:
+             q = q.reshape(-1, layer.tp_q_head_num, layer.head_dim)
+ 
+-        # NHD layout (native pool format): [num_pages, page_size, num_kv_heads, head_dim]
+-        k_cache_raw, v_cache_raw = self.token_to_kv_pool.get_kv_buffer(layer.layer_id)
+-
+         is_decode_mode = (
+             forward_batch.forward_mode.is_target_verify()
+             or forward_batch.forward_mode.is_draft_extend_v2()
+         )
++        # NVFP4 KV: spec-decode verify also runs the decode kernel, so it needs the
++        # packed FP4 + block scales (and bmm scales) exactly like forward_decode.
++        # Without this the kernel reads FP4 storage as if it were unquantized and
++        # the verify logits come out garbled, corrupting acceptance.
++        nvfp4_verify = self.is_nvfp4_kvcache and is_decode_mode
+ 
+-        if not self.use_fmha_v2 or is_decode_mode:
+-            # Decode and SM100 batch_context kernels require HND layout.
+-            k_cache, v_cache = self._reshape_paged_kv_cache(
+-                k_cache_raw, v_cache_raw, layer, layer.head_dim
+-            )
++        if nvfp4_verify:
++            kv_cache, kv_cache_block_scales = self._get_nvfp4_decode_kv_cache(layer)
++            k_scale, v_scale = self._get_nvfp4_bmm_scales(layer)
++            bmm1_scale = q_scale * k_scale * layer.scaling
++            bmm2_scale = v_scale
+         else:
+-            k_cache = k_cache_raw.view(
+-                -1, self.page_size, layer.tp_k_head_num, layer.head_dim
+-            )
+-            v_cache = v_cache_raw.view(
+-                -1, self.page_size, layer.tp_v_head_num, layer.head_dim
++            # NHD layout (native pool format): [num_pages, page_size, num_kv_heads, head_dim]
++            k_cache_raw, v_cache_raw = self.token_to_kv_pool.get_kv_buffer(
++                layer.layer_id
+             )
+-
+-        kv_cache = (k_cache, v_cache)
+-        # sink: additional value per head in the denominator of the softmax.
++            if not self.use_fmha_v2 or is_decode_mode:
++                # Decode and SM100 batch_context kernels require HND layout.
++                k_cache, v_cache = self._reshape_paged_kv_cache(
++                    k_cache_raw, v_cache_raw, layer, layer.head_dim
++                )
++            else:
++                k_cache = k_cache_raw.view(
++                    -1, self.page_size, layer.tp_k_head_num, layer.head_dim
++                )
++                v_cache = v_cache_raw.view(
++                    -1, self.page_size, layer.tp_v_head_num, layer.head_dim
++                )
++            kv_cache = (k_cache, v_cache)
++            kv_cache_block_scales = None
++            # sink: additional value per head in the denominator of the softmax.
++            bmm1_scale, bmm2_scale = self._get_bmm_scales(layer, q_scale)
+         attention_sink = kwargs.get("sinks", None)
+-        bmm1_scale, bmm2_scale = self._get_bmm_scales(layer, q_scale)
++
++        # XQA needs the draft-block mask whenever q_seq_len > 1 (target verify).
++        # The row pattern is batch-independent for chain speculation, so a single
++        # row is broadcast across the batch. Built lazily so the buffer only
++        # exists on the spec-decode path.
++        verify_spec_mask = None
++        if is_decode_mode and self.forward_metadata.max_seq_len_q > 1:
++            verify_spec_mask = self._spec_verify_mask_row().expand(
++                forward_batch.batch_size, -1, -1
++            )
+ 
+         page_table = self._get_layer_page_table(layer, forward_batch)
+ 
+@@ -1450,6 +1512,7 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+                     skip_softmax_threshold_scale_factor=envs.SGLANG_SKIP_SOFTMAX_DECODE_THRESHOLD_SCALE_FACTOR.get(),
+                     out_dtype=self.q_data_type,
+                     q_len_per_req=1,
++                    kv_cache_sf=kv_cache_block_scales,
+                     multi_ctas_kv_counter_buffer=self._multi_ctas_kv_counter_buffer,
+                 )
+             elif self.forward_metadata.is_ragged_verify:
+@@ -1469,6 +1532,8 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+                     q_len_per_req=None,
+                     max_q_len=self.forward_metadata.max_seq_len_q,
+                     cum_seq_lens_q=self.forward_metadata.cu_seqlens_q,
++                    kv_cache_sf=kv_cache_block_scales,
++                    mask=verify_spec_mask,
+                     multi_ctas_kv_counter_buffer=self._multi_ctas_kv_counter_buffer,
+                 )
+             else:
+@@ -1482,6 +1547,8 @@ class TRTLLMHAAttnBackend(FlashInferAttnBackend):
+                     window_left=layer.sliding_window_size,
+                     sinks=attention_sink,
+                     q_len_per_req=self.forward_metadata.max_seq_len_q,
++                    kv_cache_sf=kv_cache_block_scales,
++                    mask=verify_spec_mask,
+                 )
+         elif self.use_fmha_v2 and not cp_v2_active:
+             # CP-v2 must go through cp_strategy.run_attention (per-shard

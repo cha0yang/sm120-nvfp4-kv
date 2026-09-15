@@ -17,3 +17,10 @@ if [ -z "$LEFT" ]; then
 else
   echo "仍有残留:"; echo "$LEFT"
 fi
+
+# 显示显存占用, 确认 GPU 已释放
+if command -v nvidia-smi >/dev/null 2>&1; then
+  echo
+  echo "── GPU 显存 ──"
+  nvidia-smi --query-gpu=index,memory.used --format=csv,noheader
+fi
