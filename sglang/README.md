@@ -67,7 +67,8 @@ sourced by both `bootstrap.sh` and `serve.sh`).
 --speculative-num-steps 2 \
 --speculative-num-draft-tokens 3 \
 --disable-custom-all-reduce \
---disable-prefill-cuda-graph
+--disable-prefill-cuda-graph \
+--enable-cache-report
 ```
 
 | Flag | Why |
@@ -77,6 +78,7 @@ sourced by both `bootstrap.sh` and `serve.sh`).
 | `--prefill-attention-backend` / `--decode-attention-backend` | Decode goes to XQA (`trtllm_mha`); prefill stays on `flashinfer` |
 | `--disable-custom-all-reduce` | SM120 + TP=2 does not support the custom all-reduce kernels |
 | `--disable-prefill-cuda-graph` | Avoids OOM during prefill graph capture on 16 GB cards |
+| `--enable-cache-report` | Without it `usage.prompt_tokens_details` is always `null`, so clients cannot show prefix-cache hit rate |
 
 The rest of [`serve.sh`](serve.sh) is mamba sizing, sampling defaults, parsers
 and metrics — nothing that affects the NVFP4 path.

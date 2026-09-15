@@ -61,7 +61,8 @@ SGLang 的 FP4-KV 路径在打开投机解码后有四处断开，都在两个 P
 --speculative-num-steps 2 \
 --speculative-num-draft-tokens 3 \
 --disable-custom-all-reduce \
---disable-prefill-cuda-graph
+--disable-prefill-cuda-graph \
+--enable-cache-report
 ```
 
 | 参数 | 原因 |
@@ -71,6 +72,7 @@ SGLang 的 FP4-KV 路径在打开投机解码后有四处断开，都在两个 P
 | `--prefill-attention-backend` / `--decode-attention-backend` | decode 走 XQA（`trtllm_mha`），prefill 留在 `flashinfer` |
 | `--disable-custom-all-reduce` | SM120 + TP=2 不支持内置的 all-reduce kernel |
 | `--disable-prefill-cuda-graph` | 16GB 卡上避免 prefill graph capture 时 OOM |
+| `--enable-cache-report` | 不开的话 `usage.prompt_tokens_details` 永远是 `null`，客户端无法显示 prefix cache 命中率 |
 
 [`serve.sh`](serve.sh) 其余部分是 mamba 显存配比、采样默认值、parser 和 metrics ——
 不影响 NVFP4 路径。

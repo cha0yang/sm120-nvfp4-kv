@@ -49,13 +49,15 @@ exec sglang serve \
   --speculative-eagle-topk 1 \
   --speculative-num-draft-tokens 3 \
   --disable-prefill-cuda-graph \
+  --enable-cache-report \
   --disable-custom-all-reduce \
   --reasoning-parser qwen3 \
   --tool-call-parser qwen3_coder \
   --sampling-defaults openai \
   --preferred-sampling-params '{"temperature": 0.6, "top_p": 0.8, "top_k": 20, "presence_penalty": 1.5}' \
   --default-chat-template-kwargs '{"enable_thinking": false}' \
-  --mamba-full-memory-ratio 0.5 \
+  --mamba-full-memory-ratio 0.8 \
+  --max-mamba-cache-size 6 \
   --chunked-prefill-size 2048 \
   --mamba-radix-cache-strategy extra_buffer_lazy \
   --mamba-ssm-dtype float32 \

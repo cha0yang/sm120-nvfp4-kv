@@ -9,7 +9,7 @@ Enable **NVFP4 KV cache** on consumer Blackwell (SM120) GPUs — in **two engine
 | Extra requirement | `VLLM_KV_CACHE_LAYOUT=HND` | `--speculative-draft-kv-cache-dtype fp8_e4m3` |
 | MTP supported | ✅ (K=2) | ✅ (K=2) |
 | Vision | ✅ | ✅ |
-| Measured KV pool | **292,103 tokens** | 193,472 tokens (both 2×16 GB) |
+| Measured KV pool | **292,103 tokens** | 170,880 tokens (both 2×16 GB) |
 | Status | mature | works; upstream fix pending |
 
 > Both rows are on `QUASAR-QAT/Qwen3.8-27B-QUASAR-NVFP4`, with vision on and
@@ -172,7 +172,7 @@ layers:
 | Version anchor | vLLM `0.1.dev16944` + FlashInfer `0.6.11.post2` | vLLM **0.29.0** + FlashInfer **0.6.18** | SGLang **0.5.19** + FlashInfer **0.6.18** |
 | Layout support | NHD / HND both | Requires HND | Internal |
 | MTP | Compatible | Compatible (K=2) | Compatible (K=2) |
-| Measured KV pool (2×16 GB) | N/A (kernel-level) | 292,103 | 193,472 |
+| Measured KV pool (2×16 GB) | N/A (kernel-level) | 292,103 | 170,880 |
 
 **Takeaway**: for the broadest applicability (any layout / mixed precision),
 hikari's kernel route is the most thorough. For minimal changes and easy

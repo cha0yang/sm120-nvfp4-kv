@@ -9,7 +9,7 @@
 | 额外要求 | `VLLM_KV_CACHE_LAYOUT=HND` | `--speculative-draft-kv-cache-dtype fp8_e4m3` |
 | MTP | ✅（K=2） | ✅（K=2） |
 | 视觉 | ✅ | ✅ |
-| 实测 KV 池 | **292,103 tokens** | 193,472 tokens（同为 2×16GB） |
+| 实测 KV 池 | **292,103 tokens** | 170,880 tokens（同为 2×16GB） |
 | 状态 | 成熟 | 可用，上游修复未合并 |
 
 > 两行都是 `QUASAR-QAT/Qwen3.8-27B-QUASAR-NVFP4`，开视觉，SSM 状态用模型自带的
@@ -164,7 +164,7 @@ FlashInfer 用 `data_stride/8` 推导 SF 步长，页项错 8 倍），解法层
 | 版本锚定 | vLLM `0.1.dev16944` + FlashInfer `0.6.11.post2` | vLLM **0.29.0** + FlashInfer **0.6.18** | SGLang **0.5.19** + FlashInfer **0.6.18** |
 | 适用布局 | NHD / HND 均可 | 需 HND | 内部处理 |
 | MTP | 兼容 | 兼容（K=2） | 兼容（K=2） |
-| 实测 KV 池（2×16GB） | 不适用（内核级） | 292,103 | 193,472 |
+| 实测 KV 池（2×16GB） | 不适用（内核级） | 292,103 | 170,880 |
 
 **要点**：若要更普适（任意布局 / 混合精度），hikari 的内核路线最彻底；
 若要最小改动、可回滚，本仓库这两条更轻 —— 其中 **SGLang 这条改动最小**，
